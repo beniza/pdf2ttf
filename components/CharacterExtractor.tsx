@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ScissorsIcon } from './Icons';
+import { ScissorsIcon, ZoomInIcon, ZoomOutIcon, MaximizeIcon } from './Icons';
 import { BoundingBox, VectorGlyph } from '../types';
 
 interface CharacterExtractorProps {
@@ -19,16 +19,86 @@ const isPixelOn = (data: Uint8ClampedArray, width: number, x: number, y: number,
 
 export const CharacterExtractor: React.FC<CharacterExtractorProps> = ({ imageUrl, onGlyphCreated }) => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
   const [selection, setSelection] = useState<BoundingBox | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [isPanning, setIsPanning] = useState(false);
   const [startPos, setStartPos] = useState({ x: 0, y: 0 });
   const [threshold, setThreshold] = useState(128);
+  const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
+  const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
+
+  // Initialize image size and center on load
+  useEffect(() => {
+    const img = imgRef.current;
+    if (img && img.complete) {
+      setImageSize({ width: img.naturalWidth, height: img.naturalHeight });
+      resetView();
+    }
+  }, [imageUrl]);
+
+  const handleImageLoad = () => {
+    if (imgRef.current) {
+      setImageSize({ width: imgRef.current.naturalWidth, height: imgRef.current.naturalHeight });
+      resetView();
+    }
+  };
+
+  // Zoom controls
+  const handleZoom = (factor: number) => {
+    setTransform(t => ({ ...t, scale: Math.max(0.1, Math.min(10, t.scale * factor)) }));
+  };
+
+  const resetView = () => {
+    if (!containerRef.current || !imgRef.current) return;
+    const containerW = containerRef.current.clientWidth;
+    const containerH = containerRef.current.clientHeight;
+    const imgW = imgRef.current.naturalWidth;
+    const imgH = imgRef.current.naturalHeight;
+    
+    const scale = Math.min(containerW / imgW, containerH / imgH, 1);
+    setTransform({
+      x: (containerW - imgW * scale) / 2,
+      y: (containerH - imgH * scale) / 2,
+      scale
+    });
+  };
+
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const scaleFactor = e.deltaY > 0 ? 0.9 : 1.1;
+    
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    
+    setTransform(prev => {
+      const newScale = Math.max(0.1, Math.min(10, prev.scale * scaleFactor));
+      const scaleRatio = newScale / prev.scale;
+      
+      return {
+        x: mouseX - (mouseX - prev.x) * scaleRatio,
+        y: mouseY - (mouseY - prev.y) * scaleRatio,
+        scale: newScale
+      };
+    });
+  };
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if (!containerRef.current) return;
+    
+    // Right click or space for panning
+    if (e.button === 2 || e.shiftKey) {
+      e.preventDefault();
+      setIsPanning(true);
+      setStartPos({ x: e.clientX - transform.x, y: e.clientY - transform.y });
+      return;
+    }
+
     const rect = containerRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    const x = (e.clientX - rect.left - transform.x) / transform.scale;
+    const y = (e.clientY - rect.top - transform.y) / transform.scale;
     
     setStartPos({ x, y });
     setSelection({ x, y, width: 0, height: 0 });
@@ -36,10 +106,19 @@ export const CharacterExtractor: React.FC<CharacterExtractorProps> = ({ imageUrl
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
+    if (isPanning) {
+      setTransform(t => ({
+        ...t,
+        x: e.clientX - startPos.x,
+        y: e.clientY - startPos.y
+      }));
+      return;
+    }
+
     if (!isDragging || !containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
-    const currentX = e.clientX - rect.left;
-    const currentY = e.clientY - rect.top;
+    const currentX = (e.clientX - rect.left - transform.x) / transform.scale;
+    const currentY = (e.clientY - rect.top - transform.y) / transform.scale;
 
     setSelection({
       x: Math.min(startPos.x, currentX),
@@ -51,6 +130,7 @@ export const CharacterExtractor: React.FC<CharacterExtractorProps> = ({ imageUrl
 
   const handleMouseUp = () => {
     setIsDragging(false);
+    setIsPanning(false);
   };
 
   const vectoriseSelection = async () => {
@@ -240,39 +320,89 @@ export const CharacterExtractor: React.FC<CharacterExtractorProps> = ({ imageUrl
             <ScissorsIcon />
             Extract Character
           </h3>
-          <div className="flex items-center gap-2">
-             <label className="text-xs text-stone-500">Threshold</label>
-             <input 
-               type="range" 
-               min="0" 
-               max="255" 
-               value={threshold} 
-               onChange={(e) => setThreshold(Number(e.target.value))}
-               className="w-24 h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer"
-             />
+          <div className="flex items-center gap-4">
+             {/* Zoom Controls */}
+             <div className="flex items-center gap-1 bg-stone-200 rounded-lg px-2 py-1">
+                <button 
+                  onClick={() => handleZoom(1.2)} 
+                  className="p-1 hover:bg-stone-300 rounded transition-colors"
+                  title="Zoom In"
+                >
+                  <ZoomInIcon />
+                </button>
+                <button 
+                  onClick={() => handleZoom(1 / 1.2)} 
+                  className="p-1 hover:bg-stone-300 rounded transition-colors"
+                  title="Zoom Out"
+                >
+                  <ZoomOutIcon />
+                </button>
+                <button 
+                  onClick={resetView} 
+                  className="p-1 hover:bg-stone-300 rounded transition-colors"
+                  title="Reset View"
+                >
+                  <MaximizeIcon />
+                </button>
+             </div>
+
+             {/* Threshold Control */}
+             <div className="flex items-center gap-2">
+                <label className="text-xs text-stone-500">Threshold</label>
+                <input 
+                  type="range" 
+                  min="0" 
+                  max="255" 
+                  value={threshold} 
+                  onChange={(e) => setThreshold(Number(e.target.value))}
+                  className="w-24 h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer"
+                />
+             </div>
           </div>
        </div>
        
-       <div className="relative bg-stone-100 rounded-lg overflow-hidden border border-stone-300 select-none group">
+       <div 
+         className="relative bg-stone-100 rounded-lg overflow-hidden border border-stone-300 select-none group"
+         style={{ height: '500px' }}
+       >
           <div 
             ref={containerRef}
-            className="relative cursor-crosshair"
+            className="relative w-full h-full"
+            style={{ cursor: isPanning ? 'grabbing' : 'crosshair' }}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
+            onWheel={handleWheel}
+            onContextMenu={(e) => e.preventDefault()}
           >
-            <img src={imageUrl} alt="Source" className="w-full h-auto block pointer-events-none" />
+            <div
+              style={{
+                transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
+                transformOrigin: '0 0',
+                position: 'absolute',
+                top: 0,
+                left: 0
+              }}
+            >
+              <img 
+                ref={imgRef}
+                src={imageUrl} 
+                alt="Source" 
+                className="block pointer-events-none" 
+                onLoad={handleImageLoad}
+              />
+            </div>
             
             {/* Selection Overlay */}
             {selection && (
               <div 
                 className="absolute border-2 border-blue-500 bg-blue-500/20 pointer-events-none"
                 style={{
-                  left: selection.x,
-                  top: selection.y,
-                  width: selection.width,
-                  height: selection.height
+                  left: selection.x * transform.scale + transform.x,
+                  top: selection.y * transform.scale + transform.y,
+                  width: selection.width * transform.scale,
+                  height: selection.height * transform.scale
                 }}
               />
             )}
@@ -283,8 +413,11 @@ export const CharacterExtractor: React.FC<CharacterExtractorProps> = ({ imageUrl
             <div 
               className="absolute z-10"
               style={{ 
-                left: Math.min(selection.x + selection.width, (containerRef.current?.clientWidth || 0) - 100), 
-                top: selection.y + selection.height + 10 
+                left: Math.min(
+                  (selection.x + selection.width) * transform.scale + transform.x, 
+                  (containerRef.current?.clientWidth || 0) - 100
+                ), 
+                top: selection.y * transform.scale + transform.y + selection.height * transform.scale + 10 
               }}
             >
                <button 
@@ -297,7 +430,7 @@ export const CharacterExtractor: React.FC<CharacterExtractorProps> = ({ imageUrl
           )}
        </div>
        <p className="text-xs text-stone-500">
-         Drag a box around a character to isolate and vectorize it. Adjust threshold to control thickness.
+         Drag to select a character. Hold Shift or right-click to pan. Use mouse wheel to zoom. Adjust threshold to control thickness.
        </p>
     </div>
   );
