@@ -1,0 +1,5 @@
+{
+  "name": "ArchaicType Vectorizer",
+  "description": "A tool to clean, extract, and vectorize archaic characters from manuscripts using Gemini 2.5 Flash Image.",
+  "requestFramePermissions": []
+}
